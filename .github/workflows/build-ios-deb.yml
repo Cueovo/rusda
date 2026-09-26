@@ -120,13 +120,21 @@ jobs:
               echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
               echo
               echo '```'
-              grep -n -B3 -A8 'error:' "$log" | tail -n 150 || true
+              grep -n -B3 -A10 -E 'error:|Error:|FAILED:|ninja: build stopped' "$log" | tail -n 200 || true
               echo '```'
+              echo
+              echo '<details><summary>日志尾部 60 行</summary>'
+              echo
+              echo '```'
+              tail -n 60 "$log"
+              echo '```'
+              echo
+              echo '</details>'
               echo
               echo "提示:clang 15+ 会把 implicit-function-declaration / int-conversion /"
               echo "incompatible-pointer-types 这一家族从 warning 提升为 error,"
               echo "16.2.1/frida-core/clang16-compat.meson.build.patch 负责降级;"
-              echo "如果报的是别的错,把上面的 error 行发我。"
+              echo "完整日志见本次运行的 build-log artifact。"
             } >> "$GITHUB_STEP_SUMMARY"
             exit "$rc"
           fi
@@ -134,6 +142,15 @@ jobs:
             ls -l "build/frida-ios-$arch/usr/bin/frida-server" \
                   "build/frida-ios-$arch/usr/lib/frida/frida-agent.dylib"
           done
+
+      - name: 上传编译日志(失败时)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ runner.temp }}/build.log
+          retention-days: 5
+          if-no-files-found: warn
 
       - name: 打包 deb
         run: |
