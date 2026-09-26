@@ -1,0 +1,11 @@
+# patch 和 shell/python 必须在类 Unix 环境里逐字节保持一致:
+# patch 里混入 CRLF 会让 git apply 匹配不上,shebang 脚本在 macOS 上也会因 CRLF 出问题
+* text=auto
+*.patch text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.vala text eol=lf
+*.c text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.png binary
