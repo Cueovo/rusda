@@ -1,0 +1,24 @@
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -386,6 +386,18 @@
+ add_project_arguments(
+   '-include', 'config.h',
+   '-DG_LOG_DOMAIN="Frida"',
+   '-DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_56',
+   '-DG_DISABLE_DEPRECATED',
++  # frida 16.2.1 原本是用 Xcode 11/12 时代的 clang 编的。clang 15+ 把一批默认诊断
++  # 从 warning 提升成了 error(implicit-function-declaration / int-conversion /
++  # incompatible-pointer-types 这一家族),老版 Vala 生成的 C 会直接编译失败:
++  #   lib/base/session.vala: error: ... (1 error generated)
++  # 这里把它们降级回普通 warning,省得被迫去装旧 Xcode(macOS 13 runner 已下线)。
++  '-Wno-error=implicit-function-declaration',
++  '-Wno-error=implicit-int',
++  '-Wno-error=int-conversion',
++  '-Wno-error=incompatible-pointer-types',
++  '-Wno-error=incompatible-function-pointer-types',
++  '-Wno-error=incompatible-pointer-types-discards-qualifiers',
++  '-Wno-error=return-mismatch',
+   language: c_languages)
+ 
+ if host_os_family == 'linux'

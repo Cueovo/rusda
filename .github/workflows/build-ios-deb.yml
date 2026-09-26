@@ -104,9 +104,32 @@ jobs:
         run: |
           set -x
           cd frida
+          log="$RUNNER_TEMP/build.log"
+          : > "$log"
+          rc=0
           for arch in $ARCHS; do
-            make "build/frida-ios-$arch/usr/lib/pkgconfig/frida-core-1.0.pc"
+            make "build/frida-ios-$arch/usr/lib/pkgconfig/frida-core-1.0.pc" 2>&1 | tee -a "$log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" -eq 0 ] || break
           done
+          if [ "$rc" -ne 0 ]; then
+            # 失败时把真正的 error: 行抓到 Summary 里,免得要登录去翻整份日志
+            {
+              echo "### 编译失败(exit $rc)"
+              echo
+              echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
+              echo
+              echo '```'
+              grep -n -B3 -A8 'error:' "$log" | tail -n 150 || true
+              echo '```'
+              echo
+              echo "提示:clang 15+ 会把 implicit-function-declaration / int-conversion /"
+              echo "incompatible-pointer-types 这一家族从 warning 提升为 error,"
+              echo "16.2.1/frida-core/clang16-compat.meson.build.patch 负责降级;"
+              echo "如果报的是别的错,把上面的 error 行发我。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$rc"
+          fi
           for arch in $ARCHS; do
             ls -l "build/frida-ios-$arch/usr/bin/frida-server" \
                   "build/frida-ios-$arch/usr/lib/frida/frida-agent.dylib"
