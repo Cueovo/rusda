@@ -11,23 +11,24 @@
 #   tools/apply-patches.sh --frida-root ~/Code/frida
 #   tools/apply-patches.sh --frida-root ~/Code/frida --entrypoint rusda_agent_main
 #
-# 关于入口符号:默认流程把 agent 的入口改成 main —— lib/agent/agent.vala 里加一格
-# Darwin 限定的 [CCode (cname = "main")],lib/agent/meson.build 里 Darwin 分支改成
-# 导出 _main。这一步必须在链接期做:Mach-O 的符号查找走 export trie(frida 用
-# gum_darwin_module_resolve_export),事后改符号表字符串没有任何作用。
-# 如果本地 clang 因为 C 语言里出现 main() 报错(-Wmain 被当成 error),就用
-# --entrypoint 换成普通名字(例如 rusda_agent_main),脚本会同步改掉全部引用点。
+# 关于入口符号:agent 的入口默认叫 rusda_agent_main —— lib/agent/agent.vala 里加一格
+# Darwin 限定的 [CCode (cname = "rusda_agent_main")],lib/agent/meson.build 里 Darwin
+# 分支改成导出 _rusda_agent_main。这一步必须在链接期做:Mach-O 的符号查找走 export trie
+# (frida 用 gum_darwin_module_resolve_export),事后改符号表字符串没有任何作用。
+# 别用 main 这个名字:clang 15+ 对 main 的参数类型是硬校验(error,不是 warning),
+#   error: first parameter of 'main' (argument count) must be of type 'int'
+# 会被直接拒;--entrypoint 可以换成别的普通名字,脚本会同步改掉相关引用点。
 #
 # 可重复执行:已经打过的 patch 会显示 [skip]。
 set -e
 
 SRC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRIDA_ROOT="${FRIDA_ROOT:-}"
-ENTRYPOINT="main"
+ENTRYPOINT="rusda_agent_main"
 PY="${PYTHON:-python3}"
 
 usage() {
-    sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -98,13 +99,23 @@ rewrite() {
         echo "  [ERR] 找不到 $file" >&2
         exit 1
     fi
+    if [ "$from" = "$to" ]; then
+        return 0
+    fi
+    if ! grep -qF -- "$from" "$file"; then
+        if grep -qF -- "$to" "$file"; then
+            echo "  [skip] ${file#$FRIDA_ROOT/}: 已经是 $to"
+            return 0
+        fi
+        echo "  [ERR] $file 里既找不到 '$from' 也找不到 '$to'" >&2
+        exit 1
+    fi
     "$PY" - "$file" "$tmp" "$from" "$to" <<'PY' || exit 1
 import sys
 path, out, old, new = sys.argv[1:5]
 old_b, new_b = old.encode(), new.encode()
 data = open(path, "rb").read()
-n = data.count(old_b)
-if n == 0:
+if data.count(old_b) == 0:
     sys.exit(1)
 open(out, "wb").write(data.replace(old_b, new_b))
 PY
@@ -112,15 +123,22 @@ PY
     echo "  [ok]   ${file#$FRIDA_ROOT/}: $from -> $to"
 }
 
-if [ "$ENTRYPOINT" != "main" ]; then
-    echo "=== 改写入口符号为 $ENTRYPOINT"
-    rewrite "$FRIDA_ROOT/frida-core/lib/agent/agent.vala" '[CCode (cname = "main")]' "[CCode (cname = \"$ENTRYPOINT\")]"
-    rewrite "$FRIDA_ROOT/frida-core/lib/agent/meson.build" '-Wl,-exported_symbol,_main' "-Wl,-exported_symbol,_$ENTRYPOINT"
-    rewrite "$FRIDA_ROOT/frida-core/src/darwin/darwin-host-session.vala" 'entrypoint = "main"' "entrypoint = \"$ENTRYPOINT\""
-    rewrite "$FRIDA_ROOT/frida-core/src/agent-container.vala" 'symbol ("main"' "symbol (\"$ENTRYPOINT\""
-    rewrite "$FRIDA_ROOT/frida-core/tests/test-agent.vala" 'symbol ("main"' "symbol (\"$ENTRYPOINT\""
-    rewrite "$FRIDA_ROOT/frida-gum/tests/core/mapper.c" 'resolve (mapper, "main")' "resolve (mapper, \"$ENTRYPOINT\")"
+# patch 文件里 Darwin 入口符号默认就是 rusda_agent_main;--entrypoint 只在这条链路上改
+# (agent.vala 的 cname、meson 的导出符号、darwin-host-session 的查找名)。
+# 注意两点:
+#   1) 不要用 main:clang 15+ 对 main 的参数类型是硬校验(error,不是 warning),
+#      error: first parameter of 'main' (argument count) must be of type 'int'
+#   2) --entrypoint 请在干净的源码树上用一次;换名会改掉 patch 的上下文,同一棵树上
+#      再跑会报「打不上」,重新 clone 或 git checkout 那几个文件即可。
+# Darwin 限定的 [CCode (cname = ...)] 是链接期改名的唯一办法(Mach-O 的符号查找走
+# export trie),已验证 valac 会按 cname 生成符号。
+if [ "$ENTRYPOINT" = "main" ]; then
+    echo "  [warn] 入口符号 main 会被 clang 15+ 拒绝(参数类型硬校验),建议用 rusda_agent_main" >&2
 fi
+echo "=== 入口符号: $ENTRYPOINT"
+rewrite "$FRIDA_ROOT/frida-core/lib/agent/agent.vala" '[CCode (cname = "rusda_agent_main")]' "[CCode (cname = \"$ENTRYPOINT\")]"
+rewrite "$FRIDA_ROOT/frida-core/lib/agent/meson.build" '-Wl,-exported_symbol,_rusda_agent_main' "-Wl,-exported_symbol,_$ENTRYPOINT"
+rewrite "$FRIDA_ROOT/frida-core/src/darwin/darwin-host-session.vala" 'entrypoint = "rusda_agent_main"' "entrypoint = \"$ENTRYPOINT\""
 
 echo "=== 完成"
 echo "  Android: cd $FRIDA_ROOT && make core-android-arm64 && $SRC_ROOT/tools/package-android.sh"

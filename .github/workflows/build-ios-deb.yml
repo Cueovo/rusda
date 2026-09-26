@@ -27,8 +27,8 @@ on:
           - rootful
         default: rootless
       entrypoint:
-        description: agent 入口符号(默认 main;若 clang -Wmain 报错就换 rusda_agent_main)
-        default: "main"
+        description: agent 入口符号(别用 main:clang 15+ 对 main 的参数类型是硬 error)
+        default: "rusda_agent_main"
       runner:
         description: 运行器(macos-14/macos-15/macos-13,视 GitHub 可用镜像)
         default: "macos-14"

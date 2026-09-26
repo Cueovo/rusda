@@ -1,7 +1,7 @@
 diff --git a/meson.build b/meson.build
 --- a/meson.build
 +++ b/meson.build
-@@ -386,6 +386,18 @@
+@@ -386,6 +386,17 @@
  add_project_arguments(
    '-include', 'config.h',
    '-DG_LOG_DOMAIN="Frida"',
@@ -18,7 +18,6 @@ diff --git a/meson.build b/meson.build
 +  '-Wno-error=incompatible-pointer-types',
 +  '-Wno-error=incompatible-function-pointer-types',
 +  '-Wno-error=incompatible-pointer-types-discards-qualifiers',
-+  '-Wno-error=return-mismatch',
    language: c_languages)
  
  if host_os_family == 'linux'

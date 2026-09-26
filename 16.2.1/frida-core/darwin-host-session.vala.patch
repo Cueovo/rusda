@@ -7,7 +7,7 @@ index ab9b2900..4369922d 100644
  			uint id;
  
 -			unowned string entrypoint = "frida_agent_main";
-+			unowned string entrypoint = "main";
++			unowned string entrypoint = "rusda_agent_main";
  #if HAVE_EMBEDDED_ASSETS
  			id = yield fruitjector.inject_library_resource (pid, agent, entrypoint, agent_parameters, cancellable);
  #else

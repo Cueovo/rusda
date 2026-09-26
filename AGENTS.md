@@ -48,12 +48,23 @@ CI:`.github/workflows/build-ios-deb.yml`(workflow_dispatch)在 GitHub 的 macOS 
   独立的 `frida-agent.dylib`,server 运行时按 `Config.FRIDA_AGENT_PATH`(prefix=/usr)去 dlopen。
   所以 Android 那套「编内嵌 agent 时跑 topatch」(`embed-agent.sh`)在 iOS 完全不生效,
   必须在打包阶段用 `patch-macho.py` 对 Mach-O 再打一遍。
-- **入口符号只能在链接期改**:Darwin 的符号解析走 export trie(`gum_darwin_module_resolve_export`
-  只查 trie),事后改符号表/sed 替换字符串没用。现在由
-  `frida-core/agent.vala.patch`(`#if DARWIN` + `[CCode (cname = "main")]`)和
-  `frida-core/agent-meson.build.patch`(`-Wl,-exported_symbol,_main`)在编译期完成,
-  与已有的 `darwin-host-session.vala.patch`(查找 "main")配套。若 clang 因 `main` 报错:
-  `apply-patches.sh --entrypoint rusda_agent_main`。
+- **入口符号只能在链接期改,而且不能叫 main**:Darwin 的符号解析走 export trie
+  (`gum_darwin_module_resolve_export` 只查 trie),事后改符号表/sed 替换字符串没用。
+  现在由 `frida-core/agent.vala.patch`(`#if DARWIN` + `[CCode (cname = "rusda_agent_main")]`)
+  和 `frida-core/agent-meson.build.patch`(`-Wl,-exported_symbol,_rusda_agent_main`)在编译期完成,
+  与 `darwin-host-session.vala.patch`(查找同名)配套。
+  踩过的坑:一开始把名字设成 `main`,clang 15+ 直接报
+  `error: first parameter of 'main' (argument count) must be of type 'int'`
+  (main 的参数类型是硬校验,不只是返回值 warning),所以必须用普通名字;
+  `--entrypoint <name>` 可以改(agent.vala / meson.build / darwin-host-session.vala 三处,
+  要在干净源码树上跑一次;gum 的 mapper 测试里也已经是这个名字)。
+- **新 clang 要放行一批默认 error**:frida 16.2.1 是 Xcode 11/12 时代编的,而 GitHub 现在
+  只有 macOS 14/15/26(Xcode 15/16/26,clang 15+;macOS 13 已下线)。clang 15+ 把
+  `implicit-function-declaration` / `int-conversion` / `incompatible-pointer-types` 这一家族
+  从 warning 提升为 error,老版 Vala 生成的 C 会直接编译失败(例如
+  `lib/base/session.vala: ... 1 error generated`)。`frida-core/clang16-compat.meson.build.patch`
+  给 frida-core 的 `add_project_arguments` 加了对应的 `-Wno-error=...`,把这些降回 warning。
+  注意 `-Wno-error=return-mismatch` 在 clang 15 上不存在(会报 unknown warning option),别加。
 - **改完二进制必须重签名**:iOS 构建期由 `server/post-process.sh` 用 `IOS_CERTID` +
   `server/frida-server.xcent` 签名;`package-ios.sh` 在 patch/lipo 之后重做一遍
   (`codesign -f -s - --entitlements ...`),否则设备上会被 amfid 干掉。
