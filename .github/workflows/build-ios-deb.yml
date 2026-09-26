@@ -1,0 +1,150 @@
+name: Build rusda frida iOS deb
+
+# 在 GitHub Actions 的 macOS runner 上把 rusda patch 编成越狱 deb,产出可直接传到设备、
+# 用 Sileo/Zebra 安装的 .deb(默认 rootless,/var/jb)。
+#
+# 目录假设:仓库根目录下有本文件(.github/)以及各版本目录(如 16.2.1/)。
+# 编译耗时主要在 frida 本体(约 20-40 分钟),build/ 与 deps/ 会按 patch 内容做缓存。
+# 若换 Xcode 版本报错,可改 xcode / runner 输入重跑。
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch_dir:
+        description: 版本目录(patch 与 tools 所在)
+        default: "16.2.1"
+      frida_ref:
+        description: frida 源码 tag(应与 patch_dir 对应)
+        default: "16.2.1"
+      archs:
+        description: 目标架构(空格分隔;只写 arm64 兼容性最好)
+        default: "arm64"
+      flavor:
+        description: rootless(Dopamine//var/jb) 或 rootful(unc0ver/checkra1n)
+        type: choice
+        options:
+          - rootless
+          - rootful
+        default: rootless
+      entrypoint:
+        description: agent 入口符号(默认 main;若 clang -Wmain 报错就换 rusda_agent_main)
+        default: "main"
+      runner:
+        description: 运行器(macos-14/macos-15/macos-13,视 GitHub 可用镜像)
+        default: "macos-14"
+      xcode:
+        description: 指定 Xcode(留空=自动挑一个)
+        default: ""
+      verify:
+        description: 打包时做特征自检
+        type: boolean
+        default: true
+      cache_rev:
+        description: 缓存版本号(想强制全量重编就 +1)
+        default: "1"
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 300
+    env:
+      IOS_CERTID: "-"
+      PATCH_DIR: ${{ inputs.patch_dir }}
+      FRIDA_REF: ${{ inputs.frida_ref }}
+      ARCHS: ${{ inputs.archs }}
+      ENTRYPOINT: ${{ inputs.entrypoint }}
+    steps:
+      - name: 检出 patch 仓库
+        uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        run: |
+          set -x
+          ls /Applications | grep -i '^Xcode' || true
+          if [ -n "${{ inputs.xcode }}" ]; then
+            sudo xcode-select -s "/Applications/Xcode_${{ inputs.xcode }}.app"
+          else
+            for candidate in Xcode_14.3.1.app Xcode_14.2.app Xcode_15.4.app Xcode_15.2.app Xcode_15.0.1.app Xcode_16.2.app; do
+              if [ -d "/Applications/$candidate" ]; then
+                sudo xcode-select -s "/Applications/$candidate"
+                break
+              fi
+            done
+          fi
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: 缓存 frida 构建产物
+        uses: actions/cache@v4
+        with:
+          path: |
+            frida/build
+            frida/deps
+          key: frida-${{ inputs.frida_ref }}-${{ inputs.archs }}-${{ inputs.entrypoint }}-${{ inputs.cache_rev }}-${{ hashFiles(inputs.patch_dir + '/frida-core/*.patch', inputs.patch_dir + '/frida-gum/*.patch', inputs.patch_dir + '/tools/*') }}
+
+      - name: 克隆 frida(只拉需要的子模块)
+        run: |
+          set -x
+          if [ ! -d frida/frida-core ]; then
+            git clone --branch "$FRIDA_REF" https://github.com/frida/frida.git frida
+          fi
+          cd frida
+          # frida-swift/frida-clr/frida-qml 等对本任务没用,只初始化 gum/core/releng
+          git submodule update --init --recursive frida-gum frida-core releng
+          git describe --tags --always
+
+      - name: 打 patch
+        run: |
+          bash "$PATCH_DIR/tools/apply-patches.sh" \
+            --frida-root "$GITHUB_WORKSPACE/frida" \
+            --entrypoint "$ENTRYPOINT"
+
+      - name: 编译 iOS
+        run: |
+          set -x
+          cd frida
+          for arch in $ARCHS; do
+            make "build/frida-ios-$arch/usr/lib/pkgconfig/frida-core-1.0.pc"
+          done
+          for arch in $ARCHS; do
+            ls -l "build/frida-ios-$arch/usr/bin/frida-server" \
+                  "build/frida-ios-$arch/usr/lib/frida/frida-agent.dylib"
+          done
+
+      - name: 打包 deb
+        run: |
+          set -x
+          args=(--frida-root "$GITHUB_WORKSPACE/frida"
+                --version "$FRIDA_REF"
+                --arch "$ARCHS"
+                --out "$GITHUB_WORKSPACE/$PATCH_DIR/dist-ios"
+                --keep
+                --"${{ inputs.flavor }}")
+          if [ "${{ inputs.verify }}" != "true" ]; then
+            args+=(--no-verify)
+          fi
+          bash "$PATCH_DIR/tools/package-ios.sh" "${args[@]}"
+
+      - name: 概要
+        run: |
+          {
+            echo "### rusda frida $FRIDA_REF / ${{ inputs.flavor }} / $ARCHS"
+            echo
+            echo '```'
+            ls -lh "$PATCH_DIR/dist-ios"
+            echo
+            shasum -a 256 "$PATCH_DIR/dist-ios"/*.deb
+            echo
+            sed -n '1,20p' "$PATCH_DIR/dist-ios/.work/control/control" 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传 deb 与二进制
+        uses: actions/upload-artifact@v4
+        with:
+          name: rusda-frida-${{ inputs.frida_ref }}-${{ inputs.flavor }}-${{ inputs.archs }}
+          path: |
+            ${{ inputs.patch_dir }}/dist-ios/*.deb
+            ${{ inputs.patch_dir }}/dist-ios/frida-server-*
+            ${{ inputs.patch_dir }}/dist-ios/*-agent-*.dylib
+          if-no-files-found: error

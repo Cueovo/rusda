@@ -1,0 +1,10 @@
+diff --git a/lib/agent/agent.vala b/lib/agent/agent.vala
+--- a/lib/agent/agent.vala
++++ b/lib/agent/agent.vala
+@@ -1,3 +1,6 @@
+ namespace Frida.Agent {
++#if DARWIN
++	[CCode (cname = "main")]
++#endif
+ 	public void main (string agent_parameters, ref Frida.UnloadPolicy unload_policy, void * injector_state) {
+ 		if (Runner.shared_instance == null)

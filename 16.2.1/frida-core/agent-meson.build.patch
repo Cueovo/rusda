@@ -1,0 +1,11 @@
+diff --git a/lib/agent/meson.build b/lib/agent/meson.build
+--- a/lib/agent/meson.build
++++ b/lib/agent/meson.build
+@@ -24,6 +24,6 @@
+   extra_link_args += '-Wl,--retain-symbols-file,' + (meson.current_source_dir() / symfile)
+   extra_link_depends += symfile
+ elif host_os_family == 'darwin'
+-  extra_link_args += '-Wl,-exported_symbol,_frida_agent_main'
++  extra_link_args += '-Wl,-exported_symbol,_main'
+ else
+   symscript = 'frida-agent.version'
