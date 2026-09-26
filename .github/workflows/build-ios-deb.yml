@@ -80,7 +80,8 @@ jobs:
           path: |
             frida/build
             frida/deps
-          key: frida-${{ inputs.frida_ref }}-${{ inputs.archs }}-${{ inputs.entrypoint }}-${{ inputs.cache_rev }}-${{ hashFiles(inputs.patch_dir + '/frida-core/*.patch', inputs.patch_dir + '/frida-gum/*.patch', inputs.patch_dir + '/tools/*') }}
+          # 注意:hashFiles 的参数只能是字面量 glob,不能写表达式/字符串拼接
+          key: frida-${{ inputs.frida_ref }}-${{ inputs.archs }}-${{ inputs.entrypoint }}-${{ inputs.cache_rev }}-${{ hashFiles('**/*.patch', '**/frida-core/src/topatch.py', '**/tools/*') }}
 
       - name: 克隆 frida(只拉需要的子模块)
         run: |
